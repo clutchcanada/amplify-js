@@ -221,9 +221,7 @@ export default class OAuth {
 	}
 
 	private _createCognitoUser({ idToken }) {
-		// TODO: decode id token properly
 		const { email } = decodeJwt(idToken);
-
 		const poolData = {
 			UserPoolId: this._userPoolId,
 			ClientId: this._cognitoClientId,
