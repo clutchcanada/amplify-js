@@ -16,12 +16,16 @@ import { launchUri } from './urlOpener';
 import * as oAuthStorage from './oauthStorage';
 
 import {
-  OAuthOpts,
-  isCognitoHostedOpts,
-  CognitoHostedUIIdentityProvider,
+	OAuthOpts,
+	isCognitoHostedOpts,
+	CognitoHostedUIIdentityProvider,
 } from '../types/Auth';
 
-import { CognitoUser, CognitoUserPool, AuthenticationDetails } from 'amazon-cognito-identity-js';
+import {
+	CognitoUser,
+	CognitoUserPool,
+	AuthenticationDetails,
+} from 'amazon-cognito-identity-js';
 import { ConsoleLogger as Logger, Hub, urlSafeEncode } from '@aws-amplify/core';
 
 import sha256 from 'crypto-js/sha256';
@@ -242,23 +246,24 @@ export default class OAuth {
 		});
 
 		cognitoUser.setAuthenticationFlowType('CUSTOM_AUTH');
-		return new Promise((resolve,reject) => {
+		logger.debug('Sending the init request');
+		return new Promise((resolve, reject) => {
 			cognitoUser.initiateAuth(authenticationDetails, {
 				onFailure: function(err) {
-				  // User authentication was not successful
-				  reject(err);
+					reject(err);
 				},
 				customChallenge: function(challengeParameters) {
-				  // User authentication depends on challenge response
-				//   const challengeResponses = 'challenge-answer';
-				//   cognitoUser.sendCustomChallengeAnswer(challengeResponses, this);
-				  resolve(challengeParameters);
+					logger.debug('The request succeeded returning the challenge params');
+					resolve(challengeParameters);
 				},
 			});
-		})
+		});
 	}
 
-	private async _handleAuthChallengeResponse(cognitoUser, accessToken): Promise<{
+	private async _handleAuthChallengeResponse(
+		cognitoUser,
+		accessToken
+	): Promise<{
 		accessToken: any;
 		idToken: any;
 		refreshToken: any;
@@ -266,25 +271,31 @@ export default class OAuth {
 		return new Promise((resolve, reject) => {
 			cognitoUser.sendCustomChallengeAnswer(accessToken, {
 				onSuccess: function(result) {
-					// User authentication was not successful
+					logger.debug({ result, msg: 'Challenge successful, resolving...' });
 					resolve(result);
 				},
 				onFailure: function(err) {
-				  // User authentication was not successful
-				  reject(err);
+					logger.debug({ err, msg: 'Challenge unsuccessful, rejecting...' });
+					reject(err);
 				},
-			})
-		})
+			});
+		});
 	}
 
-	private async _handleLinkingUsers({ accessToken, idToken }): Promise<{
+	private async _handleLinkingUsers({
+		accessToken,
+		idToken,
+	}): Promise<{
 		accessToken: any;
 		idToken: any;
 		refreshToken: any;
 	}> {
+		logger.debug('Creating the cognito user');
 		const user = this._createCognitoUser({ idToken });
+		logger.debug('initializing the auth challenge');
 		await this._initAuthChallenge(user);
-		return this._handleAuthChallengeResponse(user, accessToken)
+		logger.debug('Responding to the challenge');
+		return this._handleAuthChallengeResponse(user, accessToken);
 	}
 
 	public async handleAuthResponse(currentUrl?: string) {
@@ -314,15 +325,30 @@ export default class OAuth {
 				`Starting ${this._config.responseType} flow with ${currentUrl}`
 			);
 			if (this._config.responseType === 'code') {
+				logger.debug('oauth flow returned handling flow now');
 				const OAuthTokens = await this._handleCodeFlow(currentUrl);
+				logger.debug({
+					OAuthTokens,
+					msg: 'The social tokens returned from the oauth flow',
+				});
 				const { username } = decodeJwt(OAuthTokens.accessToken);
+				logger.debug(`The username: ${username}`);
 
+				logger.debug("Checking the username to make sure it's social");
 				if (/^([Facebook]|[Google])+_[0-9]+/.test(username)) {
+					logger.debug('The user is social, calling the linking step');
 					const linkedUserTokens = await this._handleLinkingUsers(OAuthTokens);
-					return { ...linkedUserTokens, state};
+					logger.debug({ linkedUserTokens });
+
+					return {
+						accessToken: linkedUserTokens.accessToken.jwtToken,
+						idToken: linkedUserTokens.idToken.jwtToken,
+						refreshToken: linkedUserTokens.refreshToken.token,
+						state,
+					};
 				}
-				
-				return { ...OAuthTokens, state }
+
+				return { ...OAuthTokens, state };
 			} else {
 				return { ...(await this._handleImplicitFlow(currentUrl)), state };
 			}

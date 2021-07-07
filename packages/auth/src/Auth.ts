@@ -2031,6 +2031,7 @@ export class AuthClass {
 						refreshToken,
 						state,
 					} = await this._oAuthHandler.handleAuthResponse(currentUrl);
+
 					const session = new CognitoUserSession({
 						IdToken: new CognitoIdToken({ IdToken: idToken }),
 						RefreshToken: new CognitoRefreshToken({
@@ -2313,4 +2314,3 @@ export class AuthClass {
 export const Auth = new AuthClass(null);
 
 Amplify.register(Auth);
-
