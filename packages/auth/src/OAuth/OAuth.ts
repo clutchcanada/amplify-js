@@ -258,7 +258,11 @@ export default class OAuth {
 		})
 	}
 
-	private async _handleAuthChallengeResponse(cognitoUser, accessToken) {
+	private async _handleAuthChallengeResponse(cognitoUser, accessToken): Promise<{
+		accessToken: any;
+		idToken: any;
+		refreshToken: any;
+	}> {
 		return new Promise((resolve, reject) => {
 			cognitoUser.sendCustomChallengeAnswer(accessToken, {
 				onSuccess: function(result) {
@@ -273,7 +277,11 @@ export default class OAuth {
 		})
 	}
 
-	private async _handleLinkingUsers({ accessToken, idToken }) {
+	private async _handleLinkingUsers({ accessToken, idToken }): Promise<{
+		accessToken: any;
+		idToken: any;
+		refreshToken: any;
+	}> {
 		const user = this._createCognitoUser({ idToken });
 		await this._initAuthChallenge(user);
 		return this._handleAuthChallengeResponse(user, accessToken)
@@ -307,8 +315,14 @@ export default class OAuth {
 			);
 			if (this._config.responseType === 'code') {
 				const OAuthTokens = await this._handleCodeFlow(currentUrl);
-				const linkedUserTokens = await this._handleLinkingUsers(OAuthTokens);
-				return linkedUserTokens;
+				const { username } = decodeJwt(OAuthTokens.accessToken);
+
+				if (/^([Facebook]|[Google])+_[0-9]+/.test(username)) {
+					const linkedUserTokens = await this._handleLinkingUsers(OAuthTokens);
+					return { ...linkedUserTokens, state};
+				}
+				
+				return { ...OAuthTokens, state }
 			} else {
 				return { ...(await this._handleImplicitFlow(currentUrl)), state };
 			}

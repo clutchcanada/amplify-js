@@ -1,5 +1,5 @@
 {
-  "name": "clutch-auth",
+  "name": "@clutch/amplify-auth",
   "version": "4.1.0",
   "description": "Auth category of aws-amplify",
   "main": "./lib/index.js",
