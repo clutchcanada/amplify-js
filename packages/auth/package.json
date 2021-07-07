@@ -1,5 +1,5 @@
 {
-  "name": "@aws-amplify/auth",
+  "name": "clutch-auth",
   "version": "4.1.0",
   "description": "Auth category of aws-amplify",
   "main": "./lib/index.js",
@@ -34,7 +34,7 @@
     "type": "git",
     "url": "https://github.com/aws-amplify/amplify-js.git"
   },
-  "author": "Amazon Web Services",
+  "author": "Clutch",
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/aws/aws-amplify/issues"
@@ -44,7 +44,8 @@
     "@aws-amplify/cache": "4.0.6",
     "@aws-amplify/core": "4.1.2",
     "amazon-cognito-identity-js": "5.0.3",
-    "crypto-js": "^4.0.0"
+    "crypto-js": "^4.0.0",
+    "jsonwebtoken": "^8.5.1"
   },
   "devDependencies": {
     "@jest/test-sequencer": "^24.9.0"

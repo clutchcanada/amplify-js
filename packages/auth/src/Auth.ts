@@ -235,6 +235,7 @@ export class AuthClass {
 				scopes: cognitoAuthParams.scopes,
 				config: cognitoAuthParams,
 				cognitoClientId: cognitoAuthParams.cognitoClientId,
+				userPoolId,
 			});
 
 			// **NOTE** - Remove this in a future major release as it is a breaking change

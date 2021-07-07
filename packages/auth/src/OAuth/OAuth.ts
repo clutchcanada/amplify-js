@@ -16,15 +16,17 @@ import { launchUri } from './urlOpener';
 import * as oAuthStorage from './oauthStorage';
 
 import {
-	OAuthOpts,
-	isCognitoHostedOpts,
-	CognitoHostedUIIdentityProvider,
+  OAuthOpts,
+  isCognitoHostedOpts,
+  CognitoHostedUIIdentityProvider,
 } from '../types/Auth';
 
+import { CognitoUser, CognitoUserPool, AuthenticationDetails } from 'amazon-cognito-identity-js';
 import { ConsoleLogger as Logger, Hub, urlSafeEncode } from '@aws-amplify/core';
 
 import sha256 from 'crypto-js/sha256';
 import Base64 from 'crypto-js/enc-base64';
+import { decode as decodeJwt } from 'jsonwebtoken';
 
 const AMPLIFY_SYMBOL = (typeof Symbol !== 'undefined' &&
 typeof Symbol.for === 'function'
@@ -42,19 +44,23 @@ export default class OAuth {
 	private _config;
 	private _cognitoClientId;
 	private _scopes;
+	private _userPoolId;
 
 	constructor({
 		config,
 		cognitoClientId,
+		userPoolId,
 		scopes = [],
 	}: {
 		scopes: string[];
 		config: OAuthOpts;
 		cognitoClientId: string;
+		userPoolId: string;
 	}) {
 		this._urlOpener = config.urlOpener || launchUri;
 		this._config = config;
 		this._cognitoClientId = cognitoClientId;
+		this._userPoolId = userPoolId;
 
 		if (!this.isValidScopes(scopes))
 			throw Error('scopes must be a String Array');
@@ -214,6 +220,67 @@ export default class OAuth {
 		};
 	}
 
+	private _createCognitoUser({ idToken }) {
+		// TODO: decode id token properly
+		const { email } = decodeJwt(idToken);
+
+		const poolData = {
+			UserPoolId: this._userPoolId,
+			ClientId: this._cognitoClientId,
+		};
+
+		const userPool = new CognitoUserPool(poolData);
+		const userData = {
+			Username: email,
+			Pool: userPool,
+		};
+		return new CognitoUser(userData);
+	}
+
+	private async _initAuthChallenge(cognitoUser) {
+		const authenticationDetails = new AuthenticationDetails({
+			Username: cognitoUser.Username,
+			ValidationData: {},
+		});
+
+		cognitoUser.setAuthenticationFlowType('CUSTOM_AUTH');
+		return new Promise((resolve,reject) => {
+			cognitoUser.initiateAuth(authenticationDetails, {
+				onFailure: function(err) {
+				  // User authentication was not successful
+				  reject(err);
+				},
+				customChallenge: function(challengeParameters) {
+				  // User authentication depends on challenge response
+				//   const challengeResponses = 'challenge-answer';
+				//   cognitoUser.sendCustomChallengeAnswer(challengeResponses, this);
+				  resolve(challengeParameters);
+				},
+			});
+		})
+	}
+
+	private async _handleAuthChallengeResponse(cognitoUser, accessToken) {
+		return new Promise((resolve, reject) => {
+			cognitoUser.sendCustomChallengeAnswer(accessToken, {
+				onSuccess: function(result) {
+					// User authentication was not successful
+					resolve(result);
+				},
+				onFailure: function(err) {
+				  // User authentication was not successful
+				  reject(err);
+				},
+			})
+		})
+	}
+
+	private async _handleLinkingUsers({ accessToken, idToken }) {
+		const user = this._createCognitoUser({ idToken });
+		await this._initAuthChallenge(user);
+		return this._handleAuthChallengeResponse(user, accessToken)
+	}
+
 	public async handleAuthResponse(currentUrl?: string) {
 		try {
 			const urlParams = currentUrl
@@ -241,7 +308,9 @@ export default class OAuth {
 				`Starting ${this._config.responseType} flow with ${currentUrl}`
 			);
 			if (this._config.responseType === 'code') {
-				return { ...(await this._handleCodeFlow(currentUrl)), state };
+				const OAuthTokens = await this._handleCodeFlow(currentUrl);
+				const linkedUserTokens = await this._handleLinkingUsers(OAuthTokens);
+				return linkedUserTokens;
 			} else {
 				return { ...(await this._handleImplicitFlow(currentUrl)), state };
 			}
