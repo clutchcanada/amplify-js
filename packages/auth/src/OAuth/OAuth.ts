@@ -327,10 +327,15 @@ export default class OAuth {
 			if (this._config.responseType === 'code') {
 				logger.debug('oauth flow returned handling flow now');
 				const OAuthTokens = await this._handleCodeFlow(currentUrl);
+
+				if (!OAuthTokens) {
+					throw new Error('No jwt tokens returned from the token endpoint!');
+				}
 				logger.debug({
 					OAuthTokens,
 					msg: 'The social tokens returned from the oauth flow',
 				});
+
 				const { username } = decodeJwt(OAuthTokens.accessToken);
 				logger.debug(`The username: ${username}`);
 
@@ -348,6 +353,9 @@ export default class OAuth {
 					};
 				}
 
+				logger.debug(
+					'The username in the accessToken was a native cognito user, not linking...'
+				);
 				return { ...OAuthTokens, state };
 			} else {
 				return { ...(await this._handleImplicitFlow(currentUrl)), state };
