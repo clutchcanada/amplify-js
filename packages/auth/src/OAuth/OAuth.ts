@@ -21,10 +21,16 @@ import {
 	CognitoHostedUIIdentityProvider,
 } from '../types/Auth';
 
+import {
+	CognitoUser,
+	CognitoUserPool,
+	AuthenticationDetails,
+} from 'amazon-cognito-identity-js';
 import { ConsoleLogger as Logger, Hub, urlSafeEncode } from '@aws-amplify/core';
 
 import sha256 from 'crypto-js/sha256';
 import Base64 from 'crypto-js/enc-base64';
+import { decode as decodeJwt } from 'jsonwebtoken';
 
 const AMPLIFY_SYMBOL = (typeof Symbol !== 'undefined' &&
 typeof Symbol.for === 'function'
@@ -42,19 +48,23 @@ export default class OAuth {
 	private _config;
 	private _cognitoClientId;
 	private _scopes;
+	private _userPoolId;
 
 	constructor({
 		config,
 		cognitoClientId,
+		userPoolId,
 		scopes = [],
 	}: {
 		scopes: string[];
 		config: OAuthOpts;
 		cognitoClientId: string;
+		userPoolId: string;
 	}) {
 		this._urlOpener = config.urlOpener || launchUri;
 		this._config = config;
 		this._cognitoClientId = cognitoClientId;
+		this._userPoolId = userPoolId;
 
 		if (!this.isValidScopes(scopes))
 			throw Error('scopes must be a String Array');
@@ -214,6 +224,84 @@ export default class OAuth {
 		};
 	}
 
+	private _createCognitoUser({ idToken }) {
+		const { email } = decodeJwt(idToken);
+		const poolData = {
+			UserPoolId: this._userPoolId,
+			ClientId: this._cognitoClientId,
+		};
+
+		const userPool = new CognitoUserPool(poolData);
+		const userData = {
+			Username: email,
+			Pool: userPool,
+		};
+		return new CognitoUser(userData);
+	}
+
+	private async _initAuthChallenge(cognitoUser) {
+		const authenticationDetails = new AuthenticationDetails({
+			Username: cognitoUser.Username,
+			ValidationData: {},
+		});
+
+		cognitoUser.setAuthenticationFlowType('CUSTOM_AUTH');
+		logger.debug('Sending the init request');
+		return new Promise((resolve, reject) => {
+			cognitoUser.initiateAuth(authenticationDetails, {
+				onFailure: function(err) {
+					logger.debug({
+						err,
+						msg: 'The request succeeded returning the challenge params',
+					});
+					reject(err);
+				},
+				customChallenge: function(challengeParameters) {
+					logger.debug('The request succeeded returning the challenge params');
+					resolve(challengeParameters);
+				},
+			});
+		});
+	}
+
+	private async _handleAuthChallengeResponse(
+		cognitoUser,
+		accessToken
+	): Promise<{
+		accessToken: any;
+		idToken: any;
+		refreshToken: any;
+	}> {
+		return new Promise((resolve, reject) => {
+			cognitoUser.sendCustomChallengeAnswer(accessToken, {
+				onSuccess: function(result) {
+					logger.debug({ result, msg: 'Challenge successful, resolving...' });
+					resolve(result);
+				},
+				onFailure: function(err) {
+					logger.debug({ err, msg: 'Challenge unsuccessful, rejecting...' });
+					reject(err);
+				},
+			});
+		});
+	}
+
+	private async _handleLinkingUsers({
+		accessToken,
+		idToken,
+	}): Promise<{
+		accessToken: any;
+		idToken: any;
+		refreshToken: any;
+	}> {
+		logger.debug('Creating the cognito user');
+		const user = this._createCognitoUser({ idToken });
+		logger.debug('initializing the auth challenge');
+		await this._initAuthChallenge(user);
+		logger.debug('Responding to the challenge');
+		return this._handleAuthChallengeResponse(user, accessToken);
+	}
+
 	public async handleAuthResponse(currentUrl?: string) {
 		try {
 			const urlParams = currentUrl
@@ -241,7 +329,38 @@ export default class OAuth {
 				`Starting ${this._config.responseType} flow with ${currentUrl}`
 			);
 			if (this._config.responseType === 'code') {
-				return { ...(await this._handleCodeFlow(currentUrl)), state };
+				logger.debug('oauth flow returned handling flow now');
+				const OAuthTokens = await this._handleCodeFlow(currentUrl);
+
+				if (!OAuthTokens) {
+					throw new Error('No jwt tokens returned from the token endpoint!');
+				}
+				logger.debug({
+					OAuthTokens,
+					msg: 'The social tokens returned from the oauth flow',
+				});
+
+				const { username } = decodeJwt(OAuthTokens.accessToken);
+				logger.debug(`The username: ${username}`);
+
+				logger.debug("Checking the username to make sure it's social");
+				if (/^([Facebook]|[Google])+_[0-9]+/.test(username)) {
+					logger.debug('The user is social, calling the linking step');
+					const linkedUserTokens = await this._handleLinkingUsers(OAuthTokens);
+					logger.debug({ linkedUserTokens });
+
+					return {
+						accessToken: linkedUserTokens.accessToken.jwtToken,
+						idToken: linkedUserTokens.idToken.jwtToken,
+						refreshToken: linkedUserTokens.refreshToken.token,
+						state,
+					};
+				}
+
+				logger.debug(
+					'The username in the accessToken was a native cognito user, not linking...'
+				);
+				return { ...OAuthTokens, state };
 			} else {
 				return { ...(await this._handleImplicitFlow(currentUrl)), state };
 			}
