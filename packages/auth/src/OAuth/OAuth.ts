@@ -250,6 +250,10 @@ export default class OAuth {
 		return new Promise((resolve, reject) => {
 			cognitoUser.initiateAuth(authenticationDetails, {
 				onFailure: function(err) {
+					logger.debug({
+						err,
+						msg: 'The request succeeded returning the challenge params',
+					});
 					reject(err);
 				},
 				customChallenge: function(challengeParameters) {
